@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medieval Battle Simulation</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #222;
+        }
+        canvas {
+            display: block;
+            background: #4a4a4a;
+        }
+    </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const TEAM_A_COLOR = 'green';
+const TEAM_B_COLOR = 'yellow';
+const SOLDIER_RADIUS = 15;
+const SWORD_LENGTH = 20;
+const NUM_PER_TEAM = 10;
+
+function rand(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+class Soldier {
+    constructor(x, y, team) {
+        this.x = x;
+        this.y = y;
+        this.vx = rand(-2, 2);
+        this.vy = rand(-2, 2);
+        this.angle = rand(0, Math.PI * 2);
+        this.angVel = rand(-0.05, 0.05);
+        this.swing = 0; // sword offset
+        this.swingDir = 1;
+        this.team = team;
+        this.alive = true;
+        this.color = team === 'A' ? TEAM_A_COLOR : TEAM_B_COLOR;
+    }
+
+    update() {
+        if(!this.alive) return;
+        // random walk velocity
+        this.vx += rand(-0.2, 0.2);
+        this.vy += rand(-0.2, 0.2);
+        this.vx = Math.max(-3, Math.min(3, this.vx));
+        this.vy = Math.max(-3, Math.min(3, this.vy));
+        this.x += this.vx;
+        this.y += this.vy;
+        this.angle += this.angVel;
+        this.angVel += rand(-0.01, 0.01);
+        this.angVel = Math.max(-0.1, Math.min(0.1, this.angVel));
+        this.swing += this.swingDir * 0.1;
+        if(Math.abs(this.swing) > 0.7) this.swingDir *= -1;
+
+        // wall collisions
+        if(this.x < SOLDIER_RADIUS) {this.x = SOLDIER_RADIUS; this.vx *= -1; this.angVel *= -1;}
+        if(this.x > canvas.width - SOLDIER_RADIUS) {this.x = canvas.width - SOLDIER_RADIUS; this.vx *= -1; this.angVel *= -1;}
+        if(this.y < SOLDIER_RADIUS) {this.y = SOLDIER_RADIUS; this.vy *= -1; this.angVel *= -1;}
+        if(this.y > canvas.height - SOLDIER_RADIUS) {this.y = canvas.height - SOLDIER_RADIUS; this.vy *= -1; this.angVel *= -1;}
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.beginPath();
+        ctx.fillStyle = this.alive ? '#888' : '#444';
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 3;
+        ctx.arc(0,0,SOLDIER_RADIUS,0,Math.PI*2);
+        ctx.fill();
+        if(this.alive) ctx.stroke();
+        ctx.rotate(this.swing);
+        ctx.beginPath();
+        ctx.strokeStyle = this.color;
+        ctx.moveTo(0,0);
+        ctx.lineTo(SWORD_LENGTH,0);
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function distance(s1, s2) {
+    const dx = s1.x - s2.x;
+    const dy = s1.y - s2.y;
+    return Math.sqrt(dx*dx + dy*dy);
+}
+
+function resolveCollision(s1, s2) {
+    const dx = s1.x - s2.x;
+    const dy = s1.y - s2.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist === 0) return;
+    const overlap = SOLDIER_RADIUS*2 - dist;
+    if(overlap > 0) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        s1.x += nx * overlap/2;
+        s1.y += ny * overlap/2;
+        s2.x -= nx * overlap/2;
+        s2.y -= ny * overlap/2;
+        const dvx = s1.vx - s2.vx;
+        const dvy = s1.vy - s2.vy;
+        const impact = dvx * nx + dvy * ny;
+        if(impact > 0) return;
+        const impulse = impact;
+        s1.vx -= impulse * nx;
+        s1.vy -= impulse * ny;
+        s2.vx += impulse * nx;
+        s2.vy += impulse * ny;
+        s1.angVel += rand(-0.05,0.05);
+        s2.angVel += rand(-0.05,0.05);
+    }
+}
+
+function swordHit(attacker, target) {
+    const swordAngle = attacker.angle + attacker.swing;
+    const sx1 = attacker.x + Math.cos(swordAngle)*SOLDIER_RADIUS;
+    const sy1 = attacker.y + Math.sin(swordAngle)*SOLDIER_RADIUS;
+    const sx2 = attacker.x + Math.cos(swordAngle)*SWORD_LENGTH;
+    const sy2 = attacker.y + Math.sin(swordAngle)*SWORD_LENGTH;
+
+    const dx = target.x - sx1;
+    const dy = target.y - sy1;
+    const len = ((sx2 - sx1)**2 + (sy2 - sy1)**2);
+    const t = ((dx*(sx2-sx1)) + (dy*(sy2-sy1))) / len;
+    const closestX = sx1 + t*(sx2 - sx1);
+    const closestY = sy1 + t*(sy2 - sy1);
+    const dist = Math.hypot(target.x - closestX, target.y - closestY);
+    return t>=0 && t<=1 && dist < SOLDIER_RADIUS;
+}
+
+const soldiers = [];
+function init() {
+    for(let i=0;i<NUM_PER_TEAM;i++) {
+        soldiers.push(new Soldier(rand(SOLDIER_RADIUS, canvas.width/2 - SOLDIER_RADIUS), rand(SOLDIER_RADIUS, canvas.height - SOLDIER_RADIUS), 'A'));
+        soldiers.push(new Soldier(rand(canvas.width/2 + SOLDIER_RADIUS, canvas.width - SOLDIER_RADIUS), rand(SOLDIER_RADIUS, canvas.height - SOLDIER_RADIUS), 'B'));
+    }
+}
+
+function update() {
+    soldiers.forEach(s=>s.update());
+    for(let i=0;i<soldiers.length;i++) {
+        const a = soldiers[i];
+        if(!a.alive) continue;
+        for(let j=i+1;j<soldiers.length;j++) {
+            const b = soldiers[j];
+            if(!b.alive) continue;
+            resolveCollision(a,b);
+        }
+    }
+    // sword hits
+    for(let i=0;i<soldiers.length;i++) {
+        const atk = soldiers[i];
+        if(!atk.alive) continue;
+        for(let j=0;j<soldiers.length;j++) {
+            const tgt = soldiers[j];
+            if(!tgt.alive || atk.team === tgt.team) continue;
+            if(swordHit(atk, tgt)) {
+                tgt.alive = false;
+            }
+        }
+    }
+}
+
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    soldiers.forEach(s=>s.draw());
+}
+
+function aliveTeams() {
+    const teams = {A:0,B:0};
+    soldiers.forEach(s=>{if(s.alive) teams[s.team]++;});
+    return teams;
+}
+
+function loop() {
+    update();
+    draw();
+    const teams = aliveTeams();
+    if(teams.A===0 || teams.B===0) {
+        ctx.fillStyle = 'white';
+        ctx.font = '48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(teams.A===0? 'Yellow Wins!' : 'Green Wins!', canvas.width/2, canvas.height/2);
+    } else {
+        requestAnimationFrame(loop);
+    }
+}
+
+init();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
